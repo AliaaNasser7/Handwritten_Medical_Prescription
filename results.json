@@ -1,0 +1,29 @@
+{
+  "patient_name": "",
+  "patient_age": null,
+  "patient_gender": "",
+  "doctor_name": "Dr.M.s - Qrem",
+  "doctor_license": "",
+  "prescription_date": "",
+  "medications": [
+    {
+      "name": "Funghin U",
+      "dosage": "3C",
+      "frequency": "x1x1",
+      "duration": ""
+    },
+    {
+      "name": "osfc Core",
+      "dosage": "U.C 2",
+      "frequency": "x1x1",
+      "duration": ""
+    },
+    {
+      "name": "omeg 3 plus",
+      "dosage": "3C",
+      "frequency": "x1x1",
+      "duration": ""
+    }
+  ],
+  "additional_notes": ""
+}
