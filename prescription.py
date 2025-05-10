@@ -30,7 +30,7 @@ os.environ["OPENROUTER_API_KEY"] = OPENROUTER_API_KEY
 class GeminiFlashAPI:
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.model = "google/gemini-flash-1.5-8b-exp"
+        self.model = "google/gemini-2.0-flash-exp:free"
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key
@@ -42,14 +42,22 @@ class GeminiFlashAPI:
     
     def generate(self, messages: List[Dict[str, Any]], temperature: float = 0.7) -> str:
         """Generate a response from Gemini Flash via OpenRouter API"""
-        completion = self.client.chat.completions.create(
-            extra_headers=self.extra_headers,
-            model=self.model,
-            messages=messages,
-            temperature=temperature
-        )
-        
-        return completion.choices[0].message.content
+        try:
+            completion = self.client.chat.completions.create(
+                extra_headers=self.extra_headers,
+                model=self.model,
+                messages=messages,
+                temperature=temperature
+            )
+            
+            if not completion or not completion.choices or len(completion.choices) == 0:
+                print(f"{Fore.RED}Error: Empty response from API{Style.RESET_ALL}")
+                return None
+                
+            return completion.choices[0].message.content
+        except Exception as e:
+            print(f"{Fore.RED}API Error: {str(e)}{Style.RESET_ALL}")
+            return None
 
 class MedicationItem(BaseModel):
     name: str
@@ -74,10 +82,18 @@ def load_images(inputs: dict) -> dict:
     image_paths = inputs["image_paths"]
 
     def encode_image(image_path):
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
+        try:
+            with open(image_path, "rb") as image_file:
+                return base64.b64encode(image_file.read()).decode('utf-8')
+        except Exception as e:
+            print(f"{Fore.RED}Error loading image {image_path}: {str(e)}{Style.RESET_ALL}")
+            return None
     
-    images_base64 = [encode_image(image_path) for image_path in image_paths]
+    images_base64 = [encode_image(image_path) for image_path in image_paths if encode_image(image_path) is not None]
+    
+    if not images_base64:
+        raise ValueError(f"No valid images found in paths: {image_paths}")
+        
     return {"images": images_base64}
 
 load_images_chain = TransformChain(
@@ -88,101 +104,143 @@ load_images_chain = TransformChain(
 
 def process_prescription(image_paths: List[str]) -> dict:
     """Process prescription images and extract information."""
-    # Load images
-    images_data = load_images({"image_paths": image_paths})
-    
-    # Initialize Gemini Flash API client
-    gemini_api = GeminiFlashAPI(api_key=OPENROUTER_API_KEY)
-    
-    # Prepare messages for OpenRouter
-    system_message = {
-        "role": "system",
-        "content": """You are an expert medical transcriptionist specializing in deciphering and accurately transcribing handwritten medical prescriptions. Extract all relevant information with the highest degree of precision and return it in a structured JSON format."""
-    }
-    
-    # Create content for the user message
-    user_content = [
-        {
-            "type": "text",
-            "text": """
-            Analyze this prescription image and extract the following information:
-            - Patient's full name
-            - Patient's age (in years)
-            - Patient's gender
-            - Doctor's full name
-            - Doctor's license number
-            - Prescription date (in YYYY-MM-DD format)
-            - List of medications including:
-              - Medication name
-              - Dosage
-              - Frequency
-              - Duration
-            - Additional notes or instructions
-            
-            Format your response as a valid JSON object with the following structure:
-            {
-                "patient_name": "string",
-                "patient_age": integer,
-                "patient_gender": "string",
-                "doctor_name": "string",
-                "doctor_license": "string",
-                "prescription_date": "YYYY-MM-DD",
-                "medications": [
-                    {
-                        "name": "string",
-                        "dosage": "string",
-                        "frequency": "string",
-                        "duration": "string"
-                    }
-                ],
-                "additional_notes": "string"
-            }
-            
-            If any information is not legible or missing, use empty strings or appropriate default values.
-            The response should be ONLY the JSON object with no additional text.
-            """
-        }
-    ]
-    
-    # Add images to content
-    for img in images_data["images"]:
-        user_content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{img}"}
-        })
-    
-    # Create messages
-    messages = [
-        system_message,
-        {"role": "user", "content": user_content}
-    ]
-    
-    # Generate response
     try:
+        # Load images
+        images_data = load_images({"image_paths": image_paths})
+        
+        if not images_data["images"]:
+            print(f"{Fore.RED}Error: No valid images to process{Style.RESET_ALL}")
+            return None
+        
+        # Initialize Gemini Flash API client
+        gemini_api = GeminiFlashAPI(api_key=OPENROUTER_API_KEY)
+        
+        # Prepare messages for OpenRouter
+        system_message = {
+            "role": "system",
+            "content": """You are an expert medical transcriptionist specializing in deciphering and accurately transcribing handwritten medical prescriptions. Extract all relevant information with the highest degree of precision and return it in a structured JSON format."""
+        }
+        
+        # Create content for the user message
+        user_content = [
+            {
+                "type": "text",
+                "text": """
+                Analyze this prescription image and extract the following information:
+                - Patient's full name
+                - Patient's age (in years)
+                - Patient's gender
+                - Doctor's full name
+                - Doctor's license number
+                - Prescription date (in YYYY-MM-DD format)
+                - List of medications including:
+                  - Medication name
+                  - Dosage
+                  - Frequency
+                  - Duration
+                - Additional notes or instructions
+                
+                Format your response as a valid JSON object with the following structure:
+                {
+                    "patient_name": "string",
+                    "patient_age": integer,
+                    "patient_gender": "string",
+                    "doctor_name": "string",
+                    "doctor_license": "string",
+                    "prescription_date": "YYYY-MM-DD",
+                    "medications": [
+                        {
+                            "name": "string",
+                            "dosage": "string",
+                            "frequency": "string",
+                            "duration": "string"
+                        }
+                    ],
+                    "additional_notes": "string"
+                }
+                
+                If any information is not legible or missing, use empty strings or appropriate default values.
+                The response should be ONLY the JSON object with no additional text.
+                """
+            }
+        ]
+        
+        # Add images to content
+        for img in images_data["images"]:
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{img}"}
+            })
+        
+        # Create messages
+        messages = [
+            system_message,
+            {"role": "user", "content": user_content}
+        ]
+        
+        # Generate response
         response = gemini_api.generate(messages, temperature=0.5)
         
+        if response is None:
+            print(f"{Fore.RED}Error: No response from API{Style.RESET_ALL}")
+            return {
+                "patient_name": "",
+                "patient_age": 0,
+                "patient_gender": "",
+                "doctor_name": "",
+                "doctor_license": "",
+                "prescription_date": datetime.now(),
+                "medications": [],
+                "additional_notes": "Error processing prescription image"
+            }
+        
         # Extract JSON from the response
-        json_str = response
-        # Sometimes the model might wrap the JSON in ```json ... ``` markers
+        json_str = response.strip()
+        
+        # Sometimes the model might wrap the JSON in code markers
         if "```json" in json_str:
             json_str = json_str.split("```json")[1].split("```")[0].strip()
         elif "```" in json_str:
             json_str = json_str.split("```")[1].split("```")[0].strip()
             
         # Parse the JSON
-        result = json.loads(json_str)
+        try:
+            result = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            print(f"{Fore.RED}Error parsing JSON response: {str(e)}{Style.RESET_ALL}")
+            print(f"Response received: {json_str[:200]}...")
+            return {
+                "patient_name": "",
+                "patient_age": 0,
+                "patient_gender": "",
+                "doctor_name": "",
+                "doctor_license": "",
+                "prescription_date": datetime.now(),
+                "medications": [],
+                "additional_notes": "Error parsing response as JSON"
+            }
         
         # Convert date string to datetime object
         if "prescription_date" in result and result["prescription_date"]:
             try:
                 result["prescription_date"] = datetime.strptime(result["prescription_date"], "%Y-%m-%d")
             except:
-                pass  # Keep as string if conversion fails
+                # Keep as string if conversion fails
+                pass
         
         return result
     except Exception as e:
-        print(f"{Fore.RED}Error processing response: {str(e)}{Style.RESET_ALL}")
-        raise
+        print(f"{Fore.RED}Error processing prescription: {str(e)}{Style.RESET_ALL}")
+        return {
+            "patient_name": "",
+            "patient_age": 0,
+            "patient_gender": "",
+            "doctor_name": "",
+            "doctor_license": "",
+            "prescription_date": datetime.now(),
+            "medications": [],
+            "additional_notes": f"Error: {str(e)}"
+        }
 
 def remove_temp_folder(path):
     """ param <path> could either be relative or absolute. """
@@ -241,13 +299,23 @@ def main():
     
     # Copy image to temp folder
     temp_image_path = os.path.join(output_folder, os.path.basename(image_path))
-    shutil.copy2(image_path, temp_image_path)
+    try:
+        shutil.copy2(image_path, temp_image_path)
+    except Exception as e:
+        print(f"{Fore.RED}Error copying image to temp folder: {str(e)}{Style.RESET_ALL}")
+        remove_temp_folder(output_folder)
+        return
     
     print(f"\n{Fore.YELLOW}Processing prescription...{Style.RESET_ALL}")
     
     try:
         # Process the prescription image
         final_result = process_prescription([temp_image_path])
+        
+        if not final_result:
+            print(f"{Fore.RED}Error: Failed to process the prescription.{Style.RESET_ALL}")
+            remove_temp_folder(output_folder)
+            return
         
         # Display results
         print_header("PRESCRIPTION INFORMATION")
@@ -288,10 +356,10 @@ def main():
         
     except Exception as e:
         print(f"{Fore.RED}Error processing prescription: {str(e)}{Style.RESET_ALL}")
-    
-    # Clean up temp folder
-    remove_temp_folder(output_folder)
-    print(f"\n{Fore.GREEN}Process completed!{Style.RESET_ALL}")
+    finally:
+        # Clean up temp folder
+        remove_temp_folder(output_folder)
+        print(f"\n{Fore.GREEN}Process completed!{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     main()
