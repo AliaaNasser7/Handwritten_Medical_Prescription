@@ -11,7 +11,6 @@ This module automatically extracts and structures data from handwritten medical 
 **Features**
 - Multi-model fallback for robust data extraction
 - Error handling for common transcription mistakes
-- Achieved ~85% accuracy in transcriptions
 - Reduces manual data entry time by ~60% for medical staff
 
 **Usage**
